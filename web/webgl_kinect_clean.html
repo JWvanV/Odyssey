@@ -145,27 +145,35 @@
     }
 
     function init() {
+        //CONTAINER setup
         container = document.createElement('div');
         document.body.appendChild(container);
+
+        //INFO setup
         var info = document.createElement('div');
         info.id = 'info';
         info.innerHTML = '<a href="http://threejs.org" target="_blank">three.js</a> - kinect';
         document.body.appendChild(info);
+
+        //CAMERA setup
         camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 1, 10000);
         camera.target = new THREE.Vector3(0, 0, -1);
         camera.position.set(0, 0, 500);
         scene = new THREE.Scene();
         scene.background = new THREE.Color( 0x424242 );
 
+        //VALUES setup
         var width = 2560, height = 860;
         var nearClipping = 500, farClipping = 4000;
 
+        //Get video tags
         var colorVideo =         document.getElementById("colorVideo");
         var displacementVideo =  document.getElementById("displacementVideo");
 
         colorVideo.addEventListener('loadedmetadata', function (event) {
             console.log("Metadata loaded")
 
+            //TEXTURES setup
             var colorTexture = new THREE.VideoTexture(colorVideo);
             colorTexture.minFilter = THREE.LinearFilter;
             colorTexture.format = THREE.RGBFormat;
@@ -176,6 +184,7 @@
             displacementTexture.format = THREE.RGBFormat;
             displacementTexture.repeat.y = 0.5;
 
+            //GEOMETRY setup
             geometry = new THREE.BufferGeometry();
             var vertices = new Float32Array(width * height * 3);
             for (var i = 0, j = 0, l = vertices.length; i < l; i += 3, j++) {
@@ -184,6 +193,7 @@
             }
             geometry.addAttribute('position', new THREE.BufferAttribute(vertices, 3));
 
+            //MATERIAL setup
             material = new THREE.ShaderMaterial({
                 uniforms: {
                     "colorMap": {value: colorTexture},
@@ -202,9 +212,12 @@
                 depthWrite: false,
                 transparent: true
             });
+
+            //MESH setup
             mesh = new THREE.Points(geometry, material);
             scene.add(mesh);
 
+            //dat.GUI setup
             var videoFunctions = function(){
                 this.sync = function(){
                     displacementVideo.currentTime = colorVideo.currentTime;
@@ -221,12 +234,16 @@
             gui.close();
         }, false);
 
+        //RENDERER setup
         renderer = new THREE.WebGLRenderer();
         renderer.setPixelRatio(window.devicePixelRatio);
         renderer.setSize(window.innerWidth, window.innerHeight);
         container.appendChild(renderer.domElement);
 
+        //MOUSECONTROL setup
         cameraControls = new THREE.OrbitControls( camera, renderer.domElement );
+
+        //LISTENER setup
         window.addEventListener('resize', onWindowResize, false);
     }
 
