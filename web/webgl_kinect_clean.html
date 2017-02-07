@@ -28,10 +28,10 @@
         }
 
         video {
-            float:left;
+            float: left;
             width: 200px;
             height: 200px;
-            clear:both;
+            clear: both;
         }
 
         .video-container {
@@ -45,11 +45,11 @@
     <video id="displacementVideo"
            class="video-overlay"
            src="textures/shot0001-part03_depth.mp4"
-           autoplay loop muted controls ></video>
+           autoplay loop muted controls></video>
     <video id="colorVideo"
            class="video-overlay"
            src="textures/shot0001-part03.mp4"
-           autoplay loop muted controls ></video>
+           autoplay loop muted controls></video>
 </div>
 
 <script src="js/three.js"></script>
@@ -103,13 +103,13 @@
                 //DE NEAR en FAR clippings moeten wel echt goed zitten. 487 en  1500 lijken goed te zijn, totdat iets erg dichtbij komt. De bal wil ook nog wel onderin binnenstebuiten keren....
                 //FIXME Dit testen met een volledige bal. Dan de Near en Far Vastzetten, En dan de diepte toevoegen. :D
 
-                float lon = uv.x * TwoPi;
-                float lat = atan(uv.y*TwoPi)*TwoPi;
+                float lon = (1. - uv.x)  *TwoPi;
+                float lat = atan(uv.y*2.)*TwoPi;  //*2, want het y coordinaat wordt gehalveerd in het begin van main()
 
                 vec4 res = vec4(
-                    radius * cos(lat*TwoPi) * cos(lon),
-                    radius * cos(lat*TwoPi) * sin(lon),
-                    radius * sin(lat*TwoPi),
+                    newRadius * cos(lat) * sin(lon),
+                    newRadius * sin(lat),
+                    newRadius * cos(lat) * cos(lon),
                     1.
                 );
 
@@ -129,12 +129,11 @@
 					1.0);
 
                 //For sphere projection, make sure far and near clipping are the same, or have a difference that is smaller than is radius
-				pos = flatToSphereProjection(1000., vUv, z);
+				pos = flatToSphereProjection(100., vUv, z);
 
 				gl_PointSize = pointSize;
 				gl_Position = projectionMatrix * modelViewMatrix * pos;
 			}
-
 </script>
 
 <script id="fs" type="x-shader/x-fragment">
@@ -149,9 +148,27 @@
 <script>
     var container;
     var geometry, mesh, material;
-    var scene, camera, renderer;
-    var cameraControls;
+    var scene, outsideCamera, insideCamera, renderer;
+    var outsideCameraControls, insideCamerControls;
+    var insideCameraHelper;
+    var currentCamera;
     var clock = new THREE.Clock();
+    var stats;
+
+    //For InsideCamera
+    var userIsDragging = false;
+    var longitude = 0;
+    var latitude = 0;
+    var savedX;
+    var savedY;
+    var savedLongitude = 0;
+    var savedLatitude = 0;
+    var insideCameraTargetRadius = 20;
+
+    var CameraSelection = {
+        INSIDE: 1,
+        OUTSIDE: 2,
+    };
 
     if (Detector.webgl) {
         init();
@@ -171,20 +188,30 @@
         info.innerHTML = '<a href="http://threejs.org" target="_blank">three.js</a> - kinect';
         document.body.appendChild(info);
 
-        //CAMERA setup
-        camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 1, 10000);
-        camera.target = new THREE.Vector3(0, 0, -1);
-        camera.position.set(0, 0, 500);
+        //SCENE setup
         scene = new THREE.Scene();
-        scene.background = new THREE.Color( 0x424242 );
+        scene.background = new THREE.Color(0x424242);
+
+        //CAMERA setup
+        outsideCamera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 1, 10000);
+        outsideCamera.target = new THREE.Vector3(0, 0, -1);
+        outsideCamera.position.set(-1000, 0, 0);
+        outsideCamera.lookAt(outsideCamera.target);
+        insideCamera = new THREE.PerspectiveCamera(80, window.innerWidth / window.innerHeight, 1, 1500);
+        insideCamera.target = new THREE.Vector3(insideCameraTargetRadius, 0, insideCameraTargetRadius);
+        insideCamera.position.set(0, 0, 0);
+        insideCamera.lookAt(insideCamera.target);
+        currentCamera = CameraSelection.OUTSIDE;
+        insideCameraHelper = new THREE.CameraHelper(insideCamera);
+        scene.add(insideCameraHelper);
 
         //VALUES setup
         var width = 2560, height = 860;
-        var nearClipping = 500, farClipping = 4000;
+        var nearClipping = 50, farClipping = 1500;
 
         //Get video tags
-        var colorVideo =         document.getElementById("colorVideo");
-        var displacementVideo =  document.getElementById("displacementVideo");
+        var colorVideo = document.getElementById("colorVideo");
+        var displacementVideo = document.getElementById("displacementVideo");
 
         colorVideo.addEventListener('loadedmetadata', function (event) {
             console.log("Metadata loaded")
@@ -218,7 +245,7 @@
                     "height": {value: height},
                     "nearClipping": {value: nearClipping},
                     "farClipping": {value: farClipping},
-                    "pointSize": {value: 1},
+                    "pointSize": {value: 3},
                     "zOffset": {value: 1000}
                 },
                 vertexShader: document.getElementById('vs').textContent,
@@ -233,20 +260,37 @@
             mesh = new THREE.Points(geometry, material);
             scene.add(mesh);
 
+            //AXIS HELPER setup (R:x G:y B:z)
+//            var axisHelper = new THREE.AxisHelper(100);
+//            scene.add(axisHelper);
+
             //dat.GUI setup
-            var videoFunctions = function(){
-                this.sync = function(){
+            var videoFunctions = function () {
+                this.sync = function () {
                     displacementVideo.currentTime = colorVideo.currentTime;
                     colorVideo.currentTime = displacementVideo.currentTime;
+                };
+                this.toggleCameraInside = function () {
+                    currentCamera = CameraSelection.INSIDE;
+                    outsideCameraControls.enabled = false;
+                    scene.remove(insideCameraHelper);
+                };
+                this.toggleCameraOutside = function () {
+                    currentCamera = CameraSelection.OUTSIDE;
+                    outsideCameraControls.enabled = true;
+                    scene.add(insideCameraHelper);
                 };
             };
 
             var gui = new dat.GUI();
-            gui.add(material.uniforms.nearClipping, 'value', 1, 10000, 1.0).name('nearClipping');
-            gui.add(material.uniforms.farClipping, 'value', 1, 10000, 1.0).name('farClipping');
-            gui.add(material.uniforms.pointSize, 'value', 1, 10, 1.0).name('pointSize');
-            gui.add(material.uniforms.zOffset, 'value', 0, 4000, 1.0).name('zOffset');
-            gui.add(new videoFunctions(), "sync").name("Sync media");
+            var guiFunctions = new videoFunctions();
+            gui.add(material.uniforms.nearClipping, 'value', 1, 2000, 1.0).name('nearClipping');
+            gui.add(material.uniforms.farClipping, 'value', 1, 2000, 1.0).name('farClipping');
+            gui.add(material.uniforms.pointSize, 'value', 1, 25, 1.0).name('pointSize');
+//            gui.add(material.uniforms.zOffset, 'value', 0, 4000, 1.0).name('zOffset');
+            gui.add(guiFunctions, "sync").name("Sync media (TODO)");
+            gui.add(guiFunctions, "toggleCameraInside").name("Inside camera");
+            gui.add(guiFunctions, "toggleCameraOutside").name("Outside camera");
             gui.close();
         }, false);
 
@@ -257,15 +301,29 @@
         container.appendChild(renderer.domElement);
 
         //MOUSECONTROL setup
-        cameraControls = new THREE.OrbitControls( camera, renderer.domElement );
+        outsideCameraControls = new THREE.OrbitControls(outsideCamera, renderer.domElement);
+
+        //PERFORMANCE MONITOR setup
+        stats = new Stats();
+        stats.id = "stats";
+        stats.dom.style.position = 'absolute';
+        stats.dom.style.top = '';
+        stats.dom.style.left = '0px';
+        stats.dom.style.bottom = '0px';
+        container.appendChild(stats.dom);
 
         //LISTENER setup
         window.addEventListener('resize', onWindowResize, false);
+        document.addEventListener("mousedown", onDocumentMouseDown, false);
+        document.addEventListener("mousemove", onDocumentMouseMove, false);
+        document.addEventListener("mouseup", onDocumentMouseUp, false);
     }
 
     function onWindowResize() {
-        camera.aspect = window.innerWidth / window.innerHeight;
-        camera.updateProjectionMatrix();
+        insideCamera.aspect = window.innerWidth / window.innerHeight;
+        insideCamera.updateProjectionMatrix();
+        outsideCamera.aspect = window.innerWidth / window.innerHeight;
+        outsideCamera.updateProjectionMatrix();
         renderer.setSize(window.innerWidth, window.innerHeight);
     }
 
@@ -276,14 +334,60 @@
     }
 
     function render() {
-        renderer.render(scene, camera);
+        var cameraToRender = outsideCamera;
+
+        switch (currentCamera) {
+            case CameraSelection.INSIDE:
+                cameraToRender = insideCamera;
+                break;
+            case CameraSelection.OUTSIDE:
+                cameraToRender = outsideCamera;
+                break;
+        }
+
+        renderer.render(scene, cameraToRender);
     }
 
-    function update(){
+    function update() {
         var deltaTime = clock.getDelta();
-        cameraControls.update( deltaTime );
+        outsideCameraControls.update(deltaTime);
+        stats.update();
 
+        if (currentCamera == CameraSelection.INSIDE) {
+            // limiting latitude from -85 to 85 (cannot point to the sky or under your feet)
+            latitude = Math.max(-85, Math.min(85, latitude));
+
+            // moving the camera according to current latitude (vertical movement) and longitude (horizontal movement)
+            insideCamera.target.x = insideCameraTargetRadius * Math.sin(THREE.Math.degToRad(90 - latitude)) * Math.cos(THREE.Math.degToRad(longitude));
+            insideCamera.target.y = insideCameraTargetRadius * Math.cos(THREE.Math.degToRad(90 - latitude));
+            insideCamera.target.z = insideCameraTargetRadius * Math.sin(THREE.Math.degToRad(90 - latitude)) * Math.sin(THREE.Math.degToRad(longitude));
+            insideCamera.lookAt(insideCamera.target);
+        }
     }
+
+    function onDocumentMouseDown(event) {
+        userIsDragging = true;
+        if (currentCamera == CameraSelection.INSIDE) {
+            event.preventDefault();
+            savedX = event.clientX;
+            savedY = event.clientY;
+            savedLongitude = longitude;
+            savedLatitude = latitude;
+        }
+    }
+    function onDocumentMouseMove(event) {
+        if (currentCamera == CameraSelection.INSIDE) {
+            if (userIsDragging) {
+                longitude = (savedX - event.clientX) * 0.1 + savedLongitude;
+                latitude = (event.clientY - savedY) * 0.1 + savedLatitude;
+            }
+        }
+    }
+
+    function onDocumentMouseUp(event) {
+        userIsDragging = false;
+    }
+
 </script>
 </body>
 </html>
