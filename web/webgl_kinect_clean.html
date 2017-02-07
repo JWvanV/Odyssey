@@ -100,11 +100,8 @@
                 //  P.y = S * cos(latitude) * sin(longitude)
                 //  P.z = S * sin(latitude)
 
-                //DE NEAR en FAR clippings moeten wel echt goed zitten. 487 en  1500 lijken goed te zijn, totdat iets erg dichtbij komt. De bal wil ook nog wel onderin binnenstebuiten keren....
-                //FIXME Dit testen met een volledige bal. Dan de Near en Far Vastzetten, En dan de diepte toevoegen. :D
-
                 float lon = (1. - uv.x)  *TwoPi;
-                float lat = atan(uv.y*2.)*TwoPi;  //*2, want het y coordinaat wordt gehalveerd in het begin van main()
+                float lat = atan(uv.y*2.)*TwoPi;  //*2, because we only use half the texture.
 
                 vec4 res = vec4(
                     newRadius * cos(lat) * sin(lon),
@@ -122,14 +119,14 @@
 				float normalizedDepth = ( textureVertex.r + textureVertex.g + textureVertex.b ) / 3.0;
 				//float z = depthFromRangleLinear(1. - normalizedDepth, nearClipping, farClipping);
                 float z = depthFromRangleInverse(1. - normalizedDepth, nearClipping, farClipping);
-				vec4 pos = vec4(
-					( vUv.x - 0.5 ) * z,
-					( vUv.y - 0.5 ) * z,
-					- z + zOffset,
-					1.0);
+//				vec4 pos = vec4(
+//					( vUv.x - 0.5 ) * z,
+//					( vUv.y - 0.5 ) * z,
+//					- z + zOffset,
+//					1.0);
 
                 //For sphere projection, make sure far and near clipping are the same, or have a difference that is smaller than is radius
-				pos = flatToSphereProjection(100., vUv, z);
+				vec4 pos = flatToSphereProjection(100., vUv, z);
 
 				gl_PointSize = pointSize;
 				gl_Position = projectionMatrix * modelViewMatrix * pos;
