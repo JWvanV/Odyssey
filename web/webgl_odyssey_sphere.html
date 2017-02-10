@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>three.js - Odyssey Sphere</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+    <style>
+        body {
+            font-family: Monospace;
+            background-color: #424242;
+            margin: 0;
+            overflow: hidden;
+        }
+
+        #info {
+            color: #ffffff;
+            font-family: Monospace;
+            font-size: 13px;
+            text-align: center;
+            font-weight: bold;
+            position: absolute;
+            top: 5px;
+            width: 100%;
+        }
+
+        a {
+            color: #0040ff;
+        }
+
+        video {
+            float: left;
+            width: 200px;
+            height: 200px;
+            clear: both;
+        }
+
+        .video-container {
+            position: absolute;
+        }
+    </style>
+</head>
+<body>
+
+<div class="video-container">
+    <video id="leftEyeVideo"
+           class="video-overlay"
+           src="textures/left.mp4"
+           autoplay loop muted controls></video>
+    <!--<video id="displacementVideo"-->
+    <!--class="video-overlay"-->
+    <!--src="textures/shot0001-part03_depth.mp4"-->
+    <!--autoplay loop muted controls></video>-->
+    <!--<video id="colorVideo"-->
+    <!--class="video-overlay"-->
+    <!--src="textures/shot0001-part03.mp4"-->
+    <!--autoplay loop muted controls></video>-->
+</div>
+
+<script src="js/three.js"></script>
+<script src="js/Detector.js"></script>
+<script src="js/controls/OrbitControls.js"></script>
+
+<script src='js/libs/dat.gui.min.js'></script>
+<script src="js/libs/stats.min.js"></script>
+
+<script id="vs" type="x-shader/x-vertex">
+    uniform sampler2D leftEyeMap;
+//    uniform sampler2D displacementMap;
+//    uniform sampler2D colorMap;
+    uniform float width, height;
+    uniform float nearClipping, farClipping;
+    uniform float pointSize;
+    uniform float zOffset;
+
+    varying vec2 vUv;
+
+    const float TwoPi = 6.28318530718;
+    const float Pi = 3.14159265359;
+    const float HalfPi = 1.57079632679;
+
+    float depthFromRangleLinear(float normalizedDepth, float near, float far ){
+        return normalizedDepth * (far - near) + near;
+    }
+
+    float depthFromRangleInverse(float normalizedDepth, float near, float far ){
+        return (far * near) / (far - normalizedDepth * (far - near));
+    }
+
+    vec4 flatToPlaneProjection(vec2 uv, float z, float zOffset){
+        return vec4(
+            ( vUv.x - 0.5 ) * width,
+            ( vUv.y - 0.5 ) * height,
+            - z + zOffset,
+            1.0);
+    }
+
+    vec4 flatToSphereProjection(float radius, vec2 uv, float z){
+        float newRadius = radius - z;
+        float newX = ((1.- uv.x)*TwoPi); // 1- is to invert the ball
+        float newY = (uv.y)*TwoPi;
+
+        //http://stackoverflow.com/questions/12732590/how-map-2d-grid-points-x-y-onto-sphere-as-3d-points-x-y-z
+        // Given a "mapping sphere" of radius R,
+        // the Mercator projection (x,y) of a given latitude and longitude is:
+        // x = R * longitude;
+        // y = R * log( tan( (latitude + pi/2)/2 ) );
+
+        // and the inverse mapping of a given map location (x,y) is:
+        // longitude = x / R;
+        // latitude = 2 * atan(exp(y/R)) - pi/2;
+
+        // Given longitude and latitude on a sphere of radius S,
+        // the 3D coordinates P = (P.x, P.y, P.z) are:
+        //  P.x = S * cos(latitude) * cos(longitude)
+        //  P.y = S * cos(latitude) * sin(longitude)
+        //  P.z = S * sin(latitude)
+
+        float lon =     (1.-uv.x)*TwoPi;
+        float lat = atan(2.*uv.y)*TwoPi;  //*2, because we only use half the texture.
+
+        vec4 res = vec4(
+            newRadius * cos(lat) * sin(lon),
+            newRadius * sin(lat),
+            newRadius * cos(lat) * cos(lon),
+            1.
+        );
+
+        return res;
+    }
+
+    void main() {
+        vUv = vec2( position.x  / width, position.y / height );
+        vec4 textureVertex = texture2D( leftEyeMap, vUv );
+        float normalizedDepth = ( textureVertex.r + textureVertex.g + textureVertex.b ) / 3.0;
+        //float z = depthFromRangleLinear(1. - normalizedDepth, nearClipping, farClipping);
+        float z = depthFromRangleInverse(1. - normalizedDepth, nearClipping, farClipping);
+//				vec4 pos = vec4(
+//					( vUv.x - 0.5 ) * z,
+//					( vUv.y - 0.5 ) * z,
+//					- z + zOffset,
+//					1.0);
+
+        //For sphere projection, make sure far and near clipping are the same, or have a difference that is smaller than is radius
+        vec4 pos = flatToSphereProjection(100., vUv, z);
+        pos = flatToPlaneProjection(vUv, z, zOffset);
+
+        gl_PointSize = pointSize;
+        gl_Position = projectionMatrix * modelViewMatrix * pos;
+    }
+
+</script>
+
+<script id="fs" type="x-shader/x-fragment">
+    uniform sampler2D leftEyeMap;
+//    uniform sampler2D colorMap;
+    varying vec2 vUv;
+    void main() {
+        vec2 colorUv = vec2(vUv.x, (vUv.y *.5)+.5);
+        vec4 color = texture2D( leftEyeMap, vUv );
+        gl_FragColor = vec4(color.rgb, 0.2 );
+    }
+
+</script>
+
+<script>
+    var container;
+    var geometry, mesh, material;
+    var scene, outsideCamera, insideCamera, renderer;
+    var outsideCameraControls, insideCamerControls;
+    var insideCameraHelper;
+    var currentCamera;
+    var clock = new THREE.Clock();
+    var stats;
+
+    //VALUES setup
+    var width = 2048, height = 1024;
+    var nearClipping = 50, farClipping = 1500;
+
+    //For InsideCamera
+    var userIsDragging = false;
+    var longitude = 0;
+    var latitude = 0;
+    var savedX;
+    var savedY;
+    var savedLongitude = 0;
+    var savedLatitude = 0;
+    var insideCameraTargetRadius = 20;
+
+    var CameraSelection = {INSIDE: 1, OUTSIDE: 2};
+
+    if (Detector.webgl) {
+        init();
+        animate();
+    } else {
+        document.body.appendChild(Detector.getWebGLErrorMessage());
+    }
+
+    function init() {
+        //CONTAINER setup
+        container = document.createElement('div');
+        document.body.appendChild(container);
+
+        //INFO setup
+        var info = document.createElement('div');
+        info.id = 'info';
+        info.innerHTML = '<a href="http://threejs.org" target="_blank">three.js</a> - Odyssey Sphere';
+        document.body.appendChild(info);
+
+        //SCENE setup
+        scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x424242);
+
+        //CAMERA setup
+        outsideCamera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 1, 10000);
+        outsideCamera.target = new THREE.Vector3(0, 0, -1);
+        outsideCamera.position.set(-1000, 0, 0);
+        outsideCamera.lookAt(outsideCamera.target);
+        insideCamera = new THREE.PerspectiveCamera(80, window.innerWidth / window.innerHeight, 1, 1500);
+        insideCamera.target = new THREE.Vector3(insideCameraTargetRadius, 0, insideCameraTargetRadius);
+        insideCamera.position.set(0, 0, 0);
+        insideCamera.lookAt(insideCamera.target);
+        currentCamera = CameraSelection.OUTSIDE;
+        insideCameraHelper = new THREE.CameraHelper(insideCamera);
+        scene.add(insideCameraHelper);
+
+        //Get video tags
+        var leftEyeVideo = document.getElementById("leftEyeVideo");
+//        var colorVideo = document.getElementById("colorVideo");
+//        var displacementVideo = document.getElementById("displacementVideo");
+
+        leftEyeVideo.addEventListener('loadedmetadata', function (event) {
+            console.log("Metadata loaded");
+            onVideosLoaded();
+        }, false);
+
+        //RENDERER setup
+        renderer = new THREE.WebGLRenderer();
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        container.appendChild(renderer.domElement);
+
+        //MOUSECONTROL setup
+        outsideCameraControls = new THREE.OrbitControls(outsideCamera, renderer.domElement);
+
+        //PERFORMANCE MONITOR setup
+        stats = new Stats();
+        stats.id = "stats";
+        stats.dom.style.position = 'absolute';
+        stats.dom.style.top = '';
+        stats.dom.style.left = '0px';
+        stats.dom.style.bottom = '0px';
+        container.appendChild(stats.dom);
+
+        //LISTENER setup
+        window.addEventListener('resize', onWindowResize, false);
+        document.addEventListener("mousedown", onDocumentMouseDown, false);
+        document.addEventListener("mousemove", onDocumentMouseMove, false);
+        document.addEventListener("mouseup", onDocumentMouseUp, false);
+    }
+
+    function onVideosLoaded() {
+        //TEXTURES setup
+        var leftEyeTexture = videoToTexture(leftEyeVideo);
+//        var colorTexture = videoToTexture(colorVideo);
+//        colorTexture.repeat.y = 0.5;
+//        var displacementTexture = videoToTexture(displacementVideo);
+//        displacementTexture.repeat.y = 0.5;
+
+        //GEOMETRY setup
+        geometry = new THREE.BufferGeometry();
+        var vertices = new Float32Array(width * height * 3);
+        for (var i = 0, j = 0, l = vertices.length; i < l; i += 3, j++) {
+            vertices[i] = j % width;
+            vertices[i + 1] = Math.floor(j / width);
+        }
+        geometry.addAttribute('position', new THREE.BufferAttribute(vertices, 3));
+
+        //MATERIAL setup
+        material = new THREE.ShaderMaterial({
+            uniforms: {
+                "leftEyeMap": {value: leftEyeTexture},
+//                "colorMap": {value: colorTexture},
+//                "displacementMap": {value: displacementTexture},
+                "width": {value: width},
+                "height": {value: height},
+                "nearClipping": {value: nearClipping},
+                "farClipping": {value: farClipping},
+                "pointSize": {value: 3},
+                "zOffset": {value: 1000}
+            },
+            vertexShader: document.getElementById('vs').textContent,
+            fragmentShader: document.getElementById('fs').textContent,
+            blending: THREE.AdditiveBlending,
+            depthTest: false,
+            depthWrite: false,
+            transparent: true
+        });
+
+        //MESH setup
+        mesh = new THREE.Points(geometry, material);
+        scene.add(mesh);
+
+        //AXIS HELPER setup (R:x G:y B:z)
+//            var axisHelper = new THREE.AxisHelper(100);
+//            scene.add(axisHelper);
+
+        //dat.GUI setup
+        var videoFunctions = function () {
+            this.sync = function () {
+                displacementVideo.currentTime = colorVideo.currentTime;
+                colorVideo.currentTime = displacementVideo.currentTime;
+            };
+            this.toggleCameraInside = function () {
+                currentCamera = CameraSelection.INSIDE;
+                outsideCameraControls.enabled = false;
+                scene.remove(insideCameraHelper);
+            };
+            this.toggleCameraOutside = function () {
+                currentCamera = CameraSelection.OUTSIDE;
+                outsideCameraControls.enabled = true;
+                scene.add(insideCameraHelper);
+            };
+        };
+
+        var gui = new dat.GUI();
+        var guiFunctions = new videoFunctions();
+        gui.add(material.uniforms.nearClipping, 'value', 1, 2000, 1.0).name('nearClipping');
+        gui.add(material.uniforms.farClipping, 'value', 1, 2000, 1.0).name('farClipping');
+        gui.add(material.uniforms.pointSize, 'value', 1, 25, 1.0).name('pointSize');
+//            gui.add(material.uniforms.zOffset, 'value', 0, 4000, 1.0).name('zOffset');
+        gui.add(guiFunctions, "sync").name("Reset media");
+        gui.add(guiFunctions, "toggleCameraInside").name("Inside camera");
+        gui.add(guiFunctions, "toggleCameraOutside").name("Outside camera");
+        gui.close();
+    }
+
+    function videoToTexture(video) {
+        var texture = new THREE.VideoTexture(video);
+        texture.minFilter = THREE.LinearFilter;
+        texture.format = THREE.RGBFormat;
+    }
+
+    function onWindowResize() {
+        insideCamera.aspect = window.innerWidth / window.innerHeight;
+        insideCamera.updateProjectionMatrix();
+        outsideCamera.aspect = window.innerWidth / window.innerHeight;
+        outsideCamera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    function animate() {
+        requestAnimationFrame(animate);
+        render();
+        update();
+    }
+
+    function render() {
+        var cameraToRender = outsideCamera;
+
+        switch (currentCamera) {
+            case CameraSelection.INSIDE:
+                cameraToRender = insideCamera;
+                break;
+            case CameraSelection.OUTSIDE:
+                cameraToRender = outsideCamera;
+                break;
+        }
+
+        renderer.render(scene, cameraToRender);
+    }
+
+    function update() {
+        var deltaTime = clock.getDelta();
+        outsideCameraControls.update(deltaTime);
+        stats.update();
+
+        if (currentCamera == CameraSelection.INSIDE) {
+            // limiting latitude from -85 to 85 (cannot point to the sky or under your feet)
+            latitude = Math.max(-85, Math.min(85, latitude));
+
+            // moving the camera according to current latitude (vertical movement) and longitude (horizontal movement)
+            insideCamera.target.x = insideCameraTargetRadius * Math.sin(THREE.Math.degToRad(90 - latitude)) * Math.cos(THREE.Math.degToRad(longitude));
+            insideCamera.target.y = insideCameraTargetRadius * Math.cos(THREE.Math.degToRad(90 - latitude));
+            insideCamera.target.z = insideCameraTargetRadius * Math.sin(THREE.Math.degToRad(90 - latitude)) * Math.sin(THREE.Math.degToRad(longitude));
+            insideCamera.lookAt(insideCamera.target);
+        }
+    }
+
+    function onDocumentMouseDown(event) {
+        userIsDragging = true;
+        if (currentCamera == CameraSelection.INSIDE) {
+            event.preventDefault();
+            savedX = event.clientX;
+            savedY = event.clientY;
+            savedLongitude = longitude;
+            savedLatitude = latitude;
+        }
+    }
+    function onDocumentMouseMove(event) {
+        if (currentCamera == CameraSelection.INSIDE) {
+            if (userIsDragging) {
+                longitude = (savedX - event.clientX) * 0.1 + savedLongitude;
+                latitude = (event.clientY - savedY) * 0.1 + savedLatitude;
+            }
+        }
+    }
+
+    function onDocumentMouseUp(event) {
+        userIsDragging = false;
+    }
+
+</script>
+</body>
+</html>
